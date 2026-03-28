@@ -1,0 +1,160 @@
+Distributed Task System - Project Documentation
+
+1) Project Overview
+This project is a distributed task execution system written in C using TCP sockets.
+It has three programs:
+- server: accepts tasks from client, queues them, assigns tasks to workers, returns results to the correct client.
+- client: sends a batch of tasks, waits for all results, can request shutdown.
+- worker: polls server for tasks, executes commands, sends results back.
+
+The project uses a batch mode workflow:
+- Tasks are collected first.
+- Assignment starts only after batch completion signal.
+
+2) Project Files
+- server.c
+- client.c
+- worker.c
+
+3) Core Features
+- FIFO task queue on server.
+- Batch protocol (BATCH_START / BATCH_DONE).
+- Worker polling with 5 second interval.
+- Arithmetic task execution (ADD, SUB, MUL, DIV).
+- Sort task execution (SORT ... ASC|DESC).
+- Client-specific result delivery using client socket fd tracked by server.
+- Coordinated shutdown: when client exits with 0, server and workers also exit.
+
+4) Protocol Messages
+Client -> Server:
+- BATCH_START <n>
+- TASK <command>
+- BATCH_DONE
+- SHUTDOWN
+
+Server -> Client:
+- BATCH_OK
+- Task queued
+- ASSIGN_OK
+- Task <id> Result = <result> (by <workerId>)
+- SHUTDOWN_OK
+
+Worker -> Server:
+- GET_TASK
+- RESULT <taskId> <clientSock> <workerId> <result>
+
+Server -> Worker:
+- WAIT_BATCH
+- NO_TASK
+- <taskId> <clientSock> <command>
+- SHUTDOWN
+
+5) Supported Task Commands
+Arithmetic:
+- ADD a b
+- SUB a b
+- MUL a b
+- DIV a b
+
+Sorting:
+- SORT n1 n2 n3 ... ASC
+- SORT n1 n2 n3 ... DESC
+
+Examples:
+- ADD 10 5
+- DIV 9 3
+- SORT 9 2 5 1 ASC
+- SORT 4 7 1 DESC
+
+6) Current Working Behavior
+- Worker poll interval is 5 seconds.
+- Worker terminal is quiet when idle.
+- Worker prints only real processing activity:
+  - Worker <id> processing Task <id>: <cmd>
+  - Worker <id> completed Task <id> -> <result>
+- Server does not print each GET_TASK poll request (reduced log noise).
+- Entering 0 in client sends SHUTDOWN.
+- Server exits after shutdown request.
+- Workers exit when they receive SHUTDOWN or when server becomes unreachable.
+
+Run (Linux)
+Run in 3 terminals:
+Terminal 1:
+- ./server
+
+Terminal 2:
+- ./worker
+- Enter Worker ID, for example: W1
+
+Terminal 3:
+- ./client
+
+8) End-to-End Example
+Step A: Start programs
+- Start server
+- Start one or more workers
+- Start client
+
+Step B: Submit batch from client
+Client input:
+- Enter number of tasks (0 to exit): 3
+- TASK 1: ADD 5 7
+- TASK 2: SORT 9 1 3 ASC
+- TASK 3: DIV 8 2
+
+Expected server activity:
+- Batch start: expecting 3 task(s).
+- Task 1 added: ADD 5 7
+- Task 2 added: SORT 9 1 3 ASC
+- Task 3 added: DIV 8 2
+- Batch done: assignment enabled.
+- Assigned Task 1
+- Assigned Task 2
+- Assigned Task 3
+- Task 1 done by W1 -> 12
+- Task 2 done by W1 -> 1 3 9
+- Task 3 done by W1 -> 4
+
+Expected worker activity:
+- Worker W1 started (poll interval: 5s).
+- Worker W1 processing Task 1: ADD 5 7
+- Worker W1 completed Task 1 -> 12
+- Worker W1 processing Task 2: SORT 9 1 3 ASC
+- Worker W1 completed Task 2 -> 1 3 9
+- Worker W1 processing Task 3: DIV 8 2
+- Worker W1 completed Task 3 -> 4
+
+Expected client output:
+- Sent TASK 1
+- Sent TASK 2
+- Sent TASK 3
+- --- RESULTS ---
+- Task 1 Result = 12 (by W1)
+- Task 2 Result = 1 3 9 (by W1)
+- Task 3 Result = 4 (by W1)
+
+Step C: Exit all
+Client input:
+- Enter number of tasks (0 to exit): 0
+
+Expected shutdown behavior:
+- Client: Exiting... shutdown signal sent.
+- Server: Server shutting down.
+- Worker: Worker W1 exiting on server shutdown.
+
+9) Notes
+- This code is POSIX socket based and intended for Linux-like environments.
+- On native Windows (without POSIX compatibility), headers like arpa/inet.h and unistd.h are not available.
+
+10) Quick Troubleshooting
+Problem: bind: Address already in use
+- Cause: another process is already using the port.
+- Fix: stop old server process or change PORT consistently in all files.
+
+Problem: no tasks assigned
+- Check that client sent BATCH_DONE.
+- Before BATCH_DONE, workers intentionally receive WAIT_BATCH.
+
+Problem: no worker output
+- Worker only logs when a real task is processed.
+- Confirm tasks were queued and batch was completed.
